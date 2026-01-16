@@ -3,7 +3,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { LocationData, AIInsight } from "../types";
 
 export const getLocationInsights = async (location: LocationData): Promise<AIInsight> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+  // Always use { apiKey: process.env.API_KEY } for initialization
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
     const response = await ai.models.generateContent({
@@ -29,6 +30,7 @@ export const getLocationInsights = async (location: LocationData): Promise<AIIns
       },
     });
 
+    // Access the .text property directly (not a method)
     const text = response.text;
     if (!text) throw new Error("Empty AI response");
     return JSON.parse(text.trim()) as AIInsight;

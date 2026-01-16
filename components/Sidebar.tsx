@@ -26,8 +26,8 @@ const Sidebar: React.FC<SidebarProps> = ({ members, activeMemberId, onSelectMemb
     <div className="w-72 bg-slate-900 border-r border-slate-800 h-screen flex flex-col hidden md:flex shrink-0">
       <div className="p-6 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-slate-700 rounded flex items-center justify-center text-slate-300">
-            <i className="fas fa-microchip"></i>
+          <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-emerald-600/20">
+            <i className="fas fa-radar"></i>
           </div>
           <h1 className="text-sm font-bold tracking-tighter text-slate-200 uppercase">SysUtility <span className="text-slate-500 font-normal">v1.0.4</span></h1>
         </div>
@@ -36,24 +36,31 @@ const Sidebar: React.FC<SidebarProps> = ({ members, activeMemberId, onSelectMemb
       <div className="flex-1 overflow-y-auto p-4">
         {isUnlocked ? (
           <>
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-4 px-2">Data Nodes</h2>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-4 px-2">Active Targets</h2>
             <div className="space-y-1">
               {members.map((member) => (
                 <button
                   key={member.id}
                   onClick={() => onSelectMember(member.id)}
-                  className={`w-full flex items-center gap-3 p-2 rounded-lg transition-all ${
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
                     activeMemberId === member.id 
-                    ? 'bg-slate-800 text-blue-400 border border-slate-700' 
-                    : 'hover:bg-slate-800/50 text-slate-400'
+                    ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-xl' 
+                    : 'hover:bg-slate-800/50 text-slate-400 border border-transparent'
                   }`}
                 >
-                  <div className="w-8 h-8 rounded bg-slate-700 flex items-center justify-center overflow-hidden">
-                    <img src={member.avatar} alt="" className="w-full h-full object-cover grayscale opacity-50" />
+                  <div className="relative">
+                    <div className="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center overflow-hidden border border-slate-600">
+                      <img src={member.avatar} alt="" className="w-full h-full object-cover grayscale opacity-50" />
+                    </div>
+                    {member.status === 'online' && (
+                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full"></div>
+                    )}
                   </div>
                   <div className="text-left">
-                    <p className="text-xs font-semibold leading-tight">{member.name === 'Istri Tersayang' ? 'Node-Alpha' : 'Node-Self'}</p>
-                    <p className="text-[10px] opacity-50 uppercase">{member.status}</p>
+                    <p className="text-xs font-bold leading-tight">{member.id === '1' ? 'Alpha_Target' : 'Self_Node'}</p>
+                    <p className={`text-[9px] uppercase font-black ${member.status === 'online' ? 'text-emerald-500' : 'text-slate-600'}`}>
+                      {member.status}
+                    </p>
                   </div>
                 </button>
               ))}
@@ -61,12 +68,12 @@ const Sidebar: React.FC<SidebarProps> = ({ members, activeMemberId, onSelectMemb
           </>
         ) : (
           <div className="space-y-4">
-             <div className="p-3 bg-slate-800/30 rounded-lg border border-slate-800">
-                <p className="text-[10px] text-slate-500 mb-2 uppercase">Core Processes</p>
+             <div className="p-4 bg-slate-800/30 rounded-xl border border-slate-800">
+                <p className="text-[10px] font-bold text-slate-500 mb-3 uppercase tracking-widest">System Engine</p>
                 <div className="space-y-2">
-                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Network Stack</span><span className="text-emerald-500">OK</span></div>
-                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Disk I/O</span><span className="text-emerald-500">OK</span></div>
-                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Memory</span><span className="text-emerald-500">Optimized</span></div>
+                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Kernel Status</span><span className="text-emerald-500 font-bold">ACTIVE</span></div>
+                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Data Pipeline</span><span className="text-emerald-500 font-bold">READY</span></div>
+                   <div className="flex justify-between text-[10px]"><span className="text-slate-400">Security Layer</span><span className="text-emerald-500 font-bold">ENABLED</span></div>
                 </div>
              </div>
           </div>
@@ -76,9 +83,9 @@ const Sidebar: React.FC<SidebarProps> = ({ members, activeMemberId, onSelectMemb
       <div className="p-4 border-t border-slate-800">
         <button 
           onClick={handleVersionClick}
-          className="text-[10px] text-slate-600 hover:text-slate-500 w-full text-center py-2 mono transition-colors"
+          className="text-[10px] text-slate-600 hover:text-slate-400 w-full text-center py-2 mono transition-colors uppercase tracking-[0.2em]"
         >
-          Build: 1.0.4-stable-x64
+          Build: 1.0.4-LOCKED
         </button>
       </div>
     </div>
