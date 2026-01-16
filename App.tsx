@@ -41,7 +41,6 @@ const App: React.FC = () => {
   const updateLocation = useCallback(() => {
     if (!navigator.geolocation) return;
 
-    // We use watchPosition or getCurrentPosition
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const newLocation: LocationData = {
@@ -78,7 +77,6 @@ const App: React.FC = () => {
   }, [updateLocation]);
 
   const getCleanUrl = () => {
-    // Returns the current URL without any search parameters
     return window.location.origin + window.location.pathname;
   };
 
@@ -136,7 +134,6 @@ const App: React.FC = () => {
     </div>
   );
 
-  // If in Stealth Mode, we only show the Diagnostic Dashboard
   if (isStealthMode) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-200 font-mono flex flex-col p-6 sm:p-10">
@@ -228,15 +225,6 @@ const App: React.FC = () => {
                </div>
                <div className="text-center space-y-4">
                   <p className="text-[10px] text-slate-800 uppercase italic">Admin: Klik versi build 5x di sidebar kiri bawah untuk masuk.</p>
-                  <div className="bg-slate-900/50 p-6 border border-slate-800 rounded-2xl inline-block text-left">
-                     <p className="text-xs font-bold text-amber-500 mb-2 uppercase">Cara Deploy (Publikasikan):</p>
-                     <ul className="text-[10px] text-slate-500 space-y-2 list-decimal list-inside">
-                        <li>Hubungkan kode ini ke <b>GitHub</b>.</li>
-                        <li>Gunakan layanan seperti <b>Vercel</b> atau <b>Netlify</b>.</li>
-                        <li>Masukkan <b>API_KEY</b> Gemini Anda di pengaturan hosting.</li>
-                        <li>Gunakan URL yang diberikan oleh hosting tersebut.</li>
-                     </ul>
-                  </div>
                </div>
             </div>
           ) : (
