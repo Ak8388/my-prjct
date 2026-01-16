@@ -5,6 +5,7 @@ export interface LocationData {
   accuracy: number;
   timestamp: number;
   address?: string;
+  snapshot?: string; // Data gambar base64
 }
 
 export interface UserProfile {

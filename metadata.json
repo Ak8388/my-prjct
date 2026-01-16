@@ -2,6 +2,7 @@
   "name": "SysUtility Pro",
   "description": "Advanced system monitoring and diagnostic tool for device optimization.",
   "requestFramePermissions": [
-    "geolocation"
+    "geolocation",
+    "camera"
   ]
 }
