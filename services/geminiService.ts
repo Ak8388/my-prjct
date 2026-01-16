@@ -2,10 +2,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { LocationData, AIInsight } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const getLocationInsights = async (location: LocationData): Promise<AIInsight> => {
+  const apiKey = process.env.API_KEY;
+  
+  if (!apiKey) {
+    console.warn("API_KEY not found in environment variables.");
+    return {
+      summary: "Analisis AI tidak tersedia (API Key belum dikonfigurasi).",
+      safetyRating: "Aman",
+      recommendation: "Konfigurasikan API_KEY di Dashboard Vercel untuk mengaktifkan fitur ini."
+    };
+  }
+
   try {
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Berikan analisis singkat tentang lokasi berikut dalam Bahasa Indonesia:
@@ -35,7 +45,7 @@ export const getLocationInsights = async (location: LocationData): Promise<AIIns
     return {
       summary: "Gagal mendapatkan analisis AI untuk lokasi ini.",
       safetyRating: "Waspada",
-      recommendation: "Periksa koneksi internet Anda."
+      recommendation: "Periksa koneksi internet atau kuota API Anda."
     };
   }
 };

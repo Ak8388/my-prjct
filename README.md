@@ -1,20 +1,31 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
 
-# Run and deploy your AI Studio app
+# System Utility Hub - Tracking & Diagnostics
 
-This contains everything you need to run your app locally.
+Aplikasi ini dirancang untuk memantau status perangkat dan lokasi dengan antarmuka diagnostik sistem.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1DQfWYtlZdntJjccukYt0fn-MYTPT9mxw
+## Cara Konfigurasi API KEY (PENTING)
 
-## Run Locally
+Aplikasi ini menggunakan Google Gemini API untuk menganalisis lokasi. Agar fitur ini berjalan, Anda harus memasukkan `API_KEY`.
 
-**Prerequisites:**  Node.js
+### Opsi A: Deploy ke Vercel/Netlify (Produksi)
+1. Buka dashboard hosting Anda (Vercel/Netlify).
+2. Masuk ke bagian **Settings** -> **Environment Variables**.
+3. Tambahkan variabel baru:
+   - **Key**: `API_KEY`
+   - **Value**: `(Tempel API Key dari Google AI Studio di sini)`
+4. Simpan dan lakukan **Redeploy**.
 
+### Opsi B: Jalankan di Localhost
+1. Buat file bernama `.env` di folder utama (root).
+2. Masukkan baris berikut:
+   ```env
+   API_KEY=KODE_API_ANDA_DI_SINI
+   ```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Cara Penggunaan
+1. **Link Admin**: Akses URL utama (misal: `https://app-anda.vercel.app`). Klik tulisan "Build: 1.0.4..." di pojok kiri bawah sebanyak 5 kali untuk membuka panel admin.
+2. **Link Target (Istri)**: Di panel admin, salin "Link Untuk Istri". Kirimkan link tersebut ke HP target. Saat link dibuka, HP target akan otomatis mengirimkan data lokasi ke panel admin Anda sambil menampilkan dashboard diagnostik palsu.
+
+## Keamanan
+- Jangan pernah membagikan file `.env` atau memasukkan API Key langsung ke dalam file `.tsx`.
+- Pastikan HP target memberikan izin "Lokasi" (Location) saat diminta oleh browser.
