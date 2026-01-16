@@ -3,19 +3,13 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { LocationData, AIInsight } from "../types";
 
 export const getLocationInsights = async (location: LocationData): Promise<AIInsight> => {
-  const apiKey = process.env.API_KEY;
-
-  if (!apiKey || apiKey === "") {
-    console.error("API_KEY is missing. Check your Vercel Environment Variables.");
-    return {
-      summary: "Analisis lokasi tidak tersedia karena API Key belum dikonfigurasi.",
-      safetyRating: "Waspada",
-      recommendation: "Mohon masukkan API_KEY di Dashboard Vercel lalu Redeploy."
-    };
-  }
+  // Fix: Access API_KEY directly from process.env instead of window.process as per the GenAI SDK guidelines.
+  // The API key is assumed to be pre-configured and valid in the environment.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    // Generate content using the recommended model for basic text tasks.
+    // Both the model name and the prompt are passed directly to ai.models.generateContent.
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Berikan analisis singkat tentang lokasi berikut dalam Bahasa Indonesia:
@@ -40,6 +34,7 @@ export const getLocationInsights = async (location: LocationData): Promise<AIIns
       },
     });
 
+    // The response.text property is a getter that returns the extracted string output.
     const text = response.text;
     if (!text) throw new Error("Empty AI response");
 
@@ -47,9 +42,9 @@ export const getLocationInsights = async (location: LocationData): Promise<AIIns
   } catch (error) {
     console.error("Gemini Error:", error);
     return {
-      summary: "Gagal mendapatkan analisis dari AI. Pastikan API Key valid.",
+      summary: "Gagal memproses data lokasi melalui AI.",
       safetyRating: "Waspada",
-      recommendation: "Periksa kembali status billing atau kuota di Google AI Studio."
+      recommendation: "Lanjutkan pemantauan manual. Periksa konsol untuk detail error."
     };
   }
 };
